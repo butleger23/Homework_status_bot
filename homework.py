@@ -41,7 +41,7 @@ handler = logging.StreamHandler(sys.stdout)
 
 
 def check_tokens():
-    """Checks that programm has all needed tokens"""
+    """Checks that programm has all needed tokens."""
     if PRACTICUM_TOKEN and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
         return
 
@@ -64,7 +64,7 @@ def check_tokens():
 
 
 def send_message(bot, message):
-    """Sends me a message"""
+    """Sends me a message."""
     try:
         bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
         logging.debug(f'Бот отправил сообщение: {message}')
@@ -75,7 +75,7 @@ def send_message(bot, message):
 
 
 def get_api_answer(timestamp):
-    """Sends a request to yandex api to get homework info"""
+    """Sends a request to yandex api to get homework info."""
     try:
         response = requests.get(
             ENDPOINT, headers=HEADERS, params={'from_date': str(timestamp)}
@@ -107,7 +107,7 @@ def get_api_answer(timestamp):
 
 
 def check_response(response):
-    """Checks that api response conforms to documentation"""
+    """Checks that api response conforms to documentation."""
     if type(response) is not dict:
         raise TypeError(f'Данные получены не в виде словаря: {response}')
 
@@ -125,11 +125,8 @@ def check_response(response):
 
 
 def parse_status(homework):
-    """Returns homework status"""
-    if homework is None:
-        logging.debug('Ни у одной из домашних работ не появился новый статус')
-        return 'Ни у одной из домашних работ не появился новый статус'
-    elif not homework.get('homework_name'):
+    """Returns homework status."""
+    if 'homework_name' not in homework:
         raise WrongResponseException(
             f'В homework отсутствует ключ homework_name: {homework}'
         )
@@ -158,9 +155,10 @@ def main():
             check_response(response)
             if len(response.get('homeworks')):
                 message = parse_status(response.get('homeworks')[0])
+                send_message(bot, message)
             else:
-                message = parse_status(None)
-            send_message(bot, message)
+                logging.debug('Ни у одной из домашних работ не появился новый статус')
+            
         except Exception as error:
             error_message = f'Сбой в работе программы: {error}'
             logging.error(error_message)
