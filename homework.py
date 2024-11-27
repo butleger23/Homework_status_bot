@@ -157,8 +157,10 @@ def main():
                 message = parse_status(response.get('homeworks')[0])
                 send_message(bot, message)
             else:
-                logging.debug('Ни у одной из домашних работ не появился новый статус')
-            
+                logging.debug(
+                    'Ни у одной из домашних работ не появился новый статус'
+                )
+
         except Exception as error:
             error_message = f'Сбой в работе программы: {error}'
             logging.error(error_message)
