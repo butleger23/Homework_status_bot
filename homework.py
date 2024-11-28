@@ -9,6 +9,7 @@ from http import HTTPStatus
 from telebot import apihelper, TeleBot
 
 from exceptions import (
+    NetworkException,
     NoTokenException,
     WrongHomeworkStatusException,
     WrongResponseException,
@@ -20,8 +21,6 @@ load_dotenv()
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-
-CLIENT_ERROR_STATUS_CODE_FIRST_NUMBER = 4
 
 RETRY_PERIOD = 600
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
@@ -44,7 +43,7 @@ def check_tokens():
     missing_tokens = []
 
     for token_name, value in tokens.items():
-        if type(value) is not str:
+        if value is None:
             missing_tokens.append(token_name)
 
     if not missing_tokens:
@@ -60,8 +59,8 @@ def check_tokens():
 
 def send_message(bot, message):
     """Посылает сообщение в мой телеграм чат."""
+    logging.debug(f'Бот начал отправлять сообщение: {message}')
     try:
-        logging.debug(f'Бот начал отправлять сообщение: {message}')
         bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
         logging.debug(f'Бот отправил сообщение: {message}')
     except (apihelper.ApiException, requests.RequestException) as error:
@@ -73,11 +72,11 @@ def send_message(bot, message):
 def get_api_answer(timestamp):
     """Посылает запрос в Яндекс API для получения информации о задании."""
     params = {'from_date': str(timestamp)}
+    logging.debug(
+        'Производится запрос к с по данному эндпоинту '
+        f'{ENDPOINT} c данными аргументами {params}'
+    )
     try:
-        logging.debug(
-            'Производится запрос к с по данному эндпоинту '
-            f'{ENDPOINT} c данными аргументами {params}'
-        )
         response = requests.get(ENDPOINT, headers=HEADERS, params=params)
         logging.debug('Запрос к Яндекс API завершился успешно')
     except requests.RequestException as error:
@@ -87,9 +86,10 @@ def get_api_answer(timestamp):
         )
     else:
         if response.status_code != HTTPStatus.OK:
-            raise ConnectionError(
-                f'При обращении к эндпоинту {ENDPOINT} '
-                f'возникла ошибка со стороны сервера: {response.reason}'
+            raise NetworkException(
+                f'При обращении к эндпоинту {ENDPOINT} возникла ошибка со '
+                f'стороны сервера: {response.reason} со статусом '
+                f'{response.status_code}'
             )
 
         return response.json()
@@ -99,12 +99,14 @@ def check_response(response):
     """Проверяет что ответ Яндекс API соответствует документации."""
     logging.debug('Начало проверки ответа Яндекс API')
     if not isinstance(response, dict):
-        raise TypeError(f'Данные получены не в виде словаря: {response}')
+        raise TypeError(
+            'Данные получены не в виде словаря, '
+            f'полученный тип данных: {type(response)}')
 
     if 'homeworks' not in response:
         raise WrongResponseException('В ответе api отсутствует homeworks')
 
-    if 'homeworks' in response and not isinstance(
+    if not isinstance(
         response.get('homeworks'), list
     ):
         raise TypeError(
@@ -140,18 +142,9 @@ def parse_status(homework):
 
 def main():
     """Основная логика работы бота."""
-    logging.basicConfig(
-        format=(
-            '%(lineno)d - %(funcName)s - %(asctime)s '
-            '- %(levelname)s - %(message)s'
-        ),
-        level=logging.DEBUG,
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
-
+    check_tokens()
     bot = TeleBot(token=TELEGRAM_TOKEN)
     timestamp = int(time.time())
-    check_tokens()
     last_error_message = None
     while True:
         try:
@@ -160,13 +153,12 @@ def main():
             if response.get('homeworks'):
                 message = parse_status(response.get('homeworks')[0])
                 send_message(bot, message)
+                last_error_message = None
             else:
                 logging.debug(
                     'Ни у одной из домашних работ не появился новый статус'
                 )
-
-            last_error_message = None
-            timestamp = response.get('current_date')
+            timestamp = response.get('current_date', int(time.time()))
         except Exception as error:
             error_message = f'Сбой в работе программы: {error}'
             logging.error(error_message)
@@ -178,4 +170,12 @@ def main():
 
 
 if __name__ == '__main__':
+    logging.basicConfig(
+        format=(
+            '%(lineno)d - %(funcName)s - %(asctime)s '
+            '- %(levelname)s - %(message)s'
+        ),
+        level=logging.DEBUG,
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
     main()

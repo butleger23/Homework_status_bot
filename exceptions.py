@@ -1,3 +1,6 @@
+class NetworkException(Exception):
+    pass
+
 class NoTokenException(Exception):
     pass
 
