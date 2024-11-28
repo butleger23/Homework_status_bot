@@ -5,10 +5,10 @@ import sys
 import time
 
 from dotenv import load_dotenv
-from telebot import TeleBot
+from http import HTTPStatus
+from telebot import apihelper, TeleBot
 
 from exceptions import (
-    NetworkException,
     NoTokenException,
     WrongHomeworkStatusException,
     WrongResponseException,
@@ -33,30 +33,25 @@ HOMEWORK_VERDICTS = {
     'rejected': 'Работа проверена: у ревьюера есть замечания.',
 }
 
-logging.basicConfig(
-    format='%(asctime)s %(levelname)s %(message)s', level=logging.DEBUG
-)
-
-handler = logging.StreamHandler(sys.stdout)
-
 
 def check_tokens():
-    """Checks that programm has all needed tokens."""
-    if PRACTICUM_TOKEN and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+    """Проверяет наличие необходимых для работы программы токенов."""
+    tokens = {
+        'PRACTICUM_TOKEN': PRACTICUM_TOKEN,
+        'TELEGRAM_TOKEN': TELEGRAM_TOKEN,
+        'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID,
+    }
+    missing_tokens = []
+
+    for token_name, value in tokens.items():
+        if type(value) is not str:
+            missing_tokens.append(token_name)
+
+    if not missing_tokens:
         return
 
-    missing_tokens = []
-    if not PRACTICUM_TOKEN:
-        missing_tokens.append('PRACTICUM_TOKEN')
-
-    if not TELEGRAM_TOKEN:
-        missing_tokens.append('TELEGRAM_TOKEN')
-
-    if not TELEGRAM_CHAT_ID:
-        missing_tokens.append('TELEGRAM_CHAT_ID')
-
     error_message = (
-        f'Отсутствует обязательная переменная окружения: '
+        'Отсутствует обязательная переменная окружения: '
         f'{", ".join(missing_tokens)}'
     )
     logging.critical(error_message)
@@ -64,87 +59,96 @@ def check_tokens():
 
 
 def send_message(bot, message):
-    """Sends me a message."""
+    """Посылает сообщение в мой телеграм чат."""
     try:
+        logging.debug(f'Бот начал отправлять сообщение: {message}')
         bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
         logging.debug(f'Бот отправил сообщение: {message}')
-    except Exception as error:
+    except (apihelper.ApiException, requests.RequestException) as error:
         logging.error(
             f'При отправке сообщения {message} возникла ошибка: {error}'
         )
 
 
 def get_api_answer(timestamp):
-    """Sends a request to yandex api to get homework info."""
+    """Посылает запрос в Яндекс API для получения информации о задании."""
+    params = {'from_date': str(timestamp)}
     try:
-        response = requests.get(
-            ENDPOINT, headers=HEADERS, params={'from_date': str(timestamp)}
+        logging.debug(
+            'Производится запрос к с по данному эндпоинту '
+            f'{ENDPOINT} c данными аргументами {params}'
         )
-    except requests.RequestException:
-        raise NetworkException(
-            'There was an ambiguous exception that '
-            'occurred while handling your request.'
+        response = requests.get(ENDPOINT, headers=HEADERS, params=params)
+        logging.debug('Запрос к Яндекс API завершился успешно')
+    except requests.RequestException as error:
+        raise ConnectionError(
+            f'При обращении к эндпоинту {ENDPOINT} '
+            f'возникла ошибка со стороны клиента: {error}'
         )
     else:
-        python_response = response.json()
-        RESPONSE_STATUS_CODE_FIRST_NUMBER = response.status_code // 100
-
-        if (
-            RESPONSE_STATUS_CODE_FIRST_NUMBER
-            == CLIENT_ERROR_STATUS_CODE_FIRST_NUMBER
-        ):
-            raise NetworkException(
+        if response.status_code != HTTPStatus.OK:
+            raise ConnectionError(
                 f'При обращении к эндпоинту {ENDPOINT} '
-                f'возникла ошибка со стороны клиента: {python_response}'
-            )
-        elif response.status_code != 200:
-            raise NetworkException(
-                f'При обращении к эндпоинту {ENDPOINT} '
-                f'возникла ошибка со стороны сервера: {python_response}'
+                f'возникла ошибка со стороны сервера: {response.reason}'
             )
 
-        return python_response
+        return response.json()
 
 
 def check_response(response):
-    """Checks that api response conforms to documentation."""
-    if type(response) is not dict:
+    """Проверяет что ответ Яндекс API соответствует документации."""
+    logging.debug('Начало проверки ответа Яндекс API')
+    if not isinstance(response, dict):
         raise TypeError(f'Данные получены не в виде словаря: {response}')
 
-    if type(response.get('homeworks')) is not list:
-        raise TypeError(
-            f'Под ключом homeworks должен находиться список, '
-            f'а приходит {response.get("homeworks")}'
-        )
+    if 'homeworks' not in response:
+        raise WrongResponseException('В ответе api отсутствует homeworks')
 
-    if (
-        response.get('homeworks') is None
-        or response.get('current_date') is None
+    if 'homeworks' in response and not isinstance(
+        response.get('homeworks'), list
     ):
-        raise WrongResponseException('В ответе api отсутствует один из ключей')
+        raise TypeError(
+            'Под ключом homeworks должен находиться список, '
+            f'а приходит {type(response.get("homeworks"))}'
+        )
+    logging.debug('Проверка ответа Яндекс API успешно завершена')
 
 
 def parse_status(homework):
-    """Returns homework status."""
+    """Возвращает статус домашней работы."""
+    logging.debug('Начало проверки статуса домашней работы')
     if 'homework_name' not in homework:
-        raise WrongResponseException(
+        raise KeyError(
             f'В homework отсутствует ключ homework_name: {homework}'
         )
-
     homework_name = homework.get('homework_name')
+
+    if 'status' not in homework:
+        raise KeyError(f'В homework отсутствует ключ status: {homework}')
     status = homework.get('status')
+
     if status not in HOMEWORK_VERDICTS.keys():
         raise WrongHomeworkStatusException(
-            f'Неожиданный статус домашней работы, '
+            'Неожиданный статус домашней работы, '
             f'обнаруженный в ответе API: {status}'
         )
     verdict = HOMEWORK_VERDICTS.get(status)
 
+    logging.debug('Статус домашней работы успешно проверен')
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def main():
     """Основная логика работы бота."""
+    logging.basicConfig(
+        format=(
+            '%(lineno)d - %(funcName)s - %(asctime)s '
+            '- %(levelname)s - %(message)s'
+        ),
+        level=logging.DEBUG,
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
     bot = TeleBot(token=TELEGRAM_TOKEN)
     timestamp = int(time.time())
     check_tokens()
@@ -153,7 +157,7 @@ def main():
         try:
             response = get_api_answer(timestamp)
             check_response(response)
-            if len(response.get('homeworks')):
+            if response.get('homeworks'):
                 message = parse_status(response.get('homeworks')[0])
                 send_message(bot, message)
             else:
@@ -161,12 +165,14 @@ def main():
                     'Ни у одной из домашних работ не появился новый статус'
                 )
 
+            last_error_message = None
+            timestamp = response.get('current_date')
         except Exception as error:
             error_message = f'Сбой в работе программы: {error}'
             logging.error(error_message)
             if last_error_message != error_message:
                 send_message(bot=bot, message=error_message)
-            last_error_message = error_message
+                last_error_message = error_message
         finally:
             time.sleep(RETRY_PERIOD)
 
