@@ -7,11 +7,11 @@
 Клонировать репозиторий и перейти в него в командной строке:
 
 ```
-git clone git@github.com:butleger23/homework_bot.git
+git clone https://github.com/butleger23/Homework_status_bot.git
 ```
 
 ```
-cd homework_bot
+cd Homework_status_bot
 ```
 
 Cоздать и активировать виртуальное окружение:
